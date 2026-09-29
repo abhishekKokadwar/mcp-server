@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from unittest.mock import AsyncMock
 
 import pytest
@@ -33,6 +34,25 @@ from kubeflow_mcp.core.resilience import (
     retry_with_backoff_async,
     with_circuit_breaker,
 )
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    """Hand-driven monotonic clock for the resilience module.
+
+    A real sleep is measured through time.monotonic(), whose resolution is
+    15.625 ms on Windows. That is coarser than the margins these tests allow,
+    so a sleep can read shorter than it was. Advancing a fake clock removes the
+    dependence on how finely the platform measures time.
+    """
+    now = [1000.0]
+    monkeypatch.setattr("kubeflow_mcp.core.resilience.time.monotonic", lambda: now[0])
+
+    def advance(seconds: float) -> None:
+        now[0] += seconds
+
+    return advance
+
 
 # ─── CircuitBreaker ─────────────────────────────────────────────────────────
 
@@ -93,11 +113,10 @@ class TestCircuitBreaker:
         cb.record_failure()
         assert cb.state == CircuitState.OPEN
 
-    @pytest.mark.slow
-    def test_half_open_max_calls_limit(self):
+    def test_half_open_max_calls_limit(self, clock):
         cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.05, half_open_max_calls=2)
         cb.record_failure()
-        time.sleep(0.06)
+        clock(0.06)
 
         assert cb.can_execute() is True
         assert cb.can_execute() is True
@@ -251,12 +270,12 @@ class TestRateLimiter:
         rl.acquire()
         assert rl.acquire() is False
 
-    @pytest.mark.slow
-    def test_tokens_refill_over_time(self):
+    def test_tokens_refill_over_time(self, clock):
         rl = RateLimiter(rate=1000.0, capacity=5.0)
         for _ in range(5):
             rl.acquire()
-        time.sleep(0.01)
+        assert rl.acquire() is False
+        clock(0.01)
         assert rl.acquire() is True
 
     def test_acquire_ignores_wall_clock_jumps(self, monkeypatch):
