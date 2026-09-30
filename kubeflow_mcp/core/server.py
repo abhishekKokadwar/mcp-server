@@ -106,20 +106,34 @@ def _is_blocked(result: dict[str, Any]) -> bool:
     return any(scope.get("compatible") is False or scope.get("blockers") for scope in scopes)
 
 
+def _is_preview(result: dict[str, Any]) -> bool:
+    """Report whether a response is a confirm-gate preview rather than an executed action.
+
+    ``PreviewResponse`` sets ``status="preview"``. The trainer runtime tools still
+    use the legacy ``data.action="preview"`` shape (see docs/CONVENTIONS.md).
+    """
+    if result.get("status") == "preview":
+        return True
+    data = result.get("data")
+    return isinstance(data, dict) and data.get("action") == "preview"
+
+
 def _inject_meta(result: Any, tool_name: str) -> Any:
     """Inject _meta (phase + next hint) into successful tool responses.
 
     Provides workflow guidance for clients that don't consume server
     instructions or MCP resources (e.g. Ollama, custom agents). The ``next``
     hint is withheld when the response reports blockers, so the guidance cannot
-    tell the agent to advance past an environment that is not ready.
+    tell the agent to advance past an environment that is not ready. It is also
+    withheld for confirm-gate previews: the hints describe the step after the
+    action ran, and a preview has not run anything yet.
     """
     if not isinstance(result, dict):
         return result
     if "error" in result or "error_code" in result:
         return result
     phase = TOOL_TO_PHASE.get(tool_name)
-    hint = None if _is_blocked(result) else TOOL_NEXT_HINTS.get(tool_name)
+    hint = None if _is_blocked(result) or _is_preview(result) else TOOL_NEXT_HINTS.get(tool_name)
     if phase or hint:
         meta: dict[str, str] = {}
         if phase:

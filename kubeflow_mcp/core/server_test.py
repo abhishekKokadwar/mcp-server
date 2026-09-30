@@ -26,6 +26,7 @@ from fastmcp import Client
 
 from kubeflow_mcp import __version__
 from kubeflow_mcp.common.constants import TOOL_NEXT_HINTS, TOOL_TO_PHASE
+from kubeflow_mcp.common.types import PreviewResponse, ToolResponse
 from kubeflow_mcp.core.policy import get_effective_persona, set_effective_persona
 from kubeflow_mcp.core.server import _inject_meta, create_server
 from kubeflow_mcp.trainer import CLIENT_TOOL_ANNOTATIONS, CLIENT_TOOL_DESCRIPTIONS
@@ -147,6 +148,87 @@ class TestInjectMetaBlockedResponses:
             "pre_flight",
         )
         assert result["_meta"]["next"] == TOOL_NEXT_HINTS["pre_flight"]
+
+
+class TestInjectMetaPreviewResponses:
+    """``_meta.next`` must not describe the step after an action that has not run.
+
+    With ``confirmed=False`` a mutating tool only returns a preview, but the hints
+    in ``TOOL_NEXT_HINTS`` assume the action ran ("Monitor with get_training_job",
+    "Confirm removal with list_runtimes()").
+    """
+
+    MUTATING_TOOLS = [
+        "fine_tune",
+        "run_custom_training",
+        "run_container_training",
+        "delete_training_job",
+        "update_training_job",
+        "create_runtime",
+        "patch_runtime",
+        "delete_runtime",
+    ]
+
+    def test_every_mutating_tool_has_a_post_action_hint(self):
+        """Guards the premise: each of these tools has a hint that could leak."""
+        for tool_name in self.MUTATING_TOOLS:
+            assert TOOL_NEXT_HINTS.get(tool_name), tool_name
+
+    def test_next_withheld_for_preview_response(self):
+        for tool_name in self.MUTATING_TOOLS:
+            result = _inject_meta(PreviewResponse(config={"name": "job-a"}).model_dump(), tool_name)
+            assert "next" not in result["_meta"], tool_name
+
+    def test_next_withheld_for_legacy_runtime_preview(self):
+        """Runtime tools preview through ToolResponse with data.action="preview"."""
+        for tool_name in ("create_runtime", "patch_runtime", "delete_runtime"):
+            result = _inject_meta(
+                ToolResponse(data={"action": "preview", "runtime": "rt-a"}).model_dump(),
+                tool_name,
+            )
+            assert "next" not in result["_meta"], tool_name
+
+    def test_phase_preserved_for_preview(self):
+        result = _inject_meta(PreviewResponse(config={}).model_dump(), "fine_tune")
+        assert result["_meta"]["phase"] == TOOL_TO_PHASE["fine_tune"]
+
+    def test_next_present_after_confirmed_submission(self):
+        result = _inject_meta(
+            ToolResponse(data={"job_id": "job-a", "status": "Created"}).model_dump(),
+            "fine_tune",
+        )
+        assert result["_meta"]["next"] == TOOL_NEXT_HINTS["fine_tune"]
+
+    def test_next_present_after_confirmed_update(self):
+        """Executed update_training_job carries data.action="suspend", not "preview"."""
+        result = _inject_meta(
+            ToolResponse(data={"job": "job-a", "action": "suspend"}).model_dump(),
+            "update_training_job",
+        )
+        assert result["_meta"]["next"] == TOOL_NEXT_HINTS["update_training_job"]
+
+    def test_job_status_in_data_is_not_a_preview(self):
+        """A job's own status lives in data; only the envelope status marks a preview."""
+        result = _inject_meta(
+            ToolResponse(data={"name": "job-a", "status": "preview"}).model_dump(),
+            "get_training_job",
+        )
+        assert result["_meta"]["next"] == TOOL_NEXT_HINTS["get_training_job"]
+
+    async def test_preview_over_mcp_has_no_next_hint(self):
+        """End to end: patch_runtime previews without touching the cluster."""
+        previous = get_effective_persona()
+        try:
+            async with Client(create_server(persona="platform-admin")) as client:
+                result = await client.call_tool(
+                    "patch_runtime",
+                    {"name": "rt-a", "patch": {"metadata": {"labels": {"a": "b"}}}},
+                )
+        finally:
+            set_effective_persona(previous)
+        body = result.structured_content
+        assert body["data"]["action"] == "preview"
+        assert body["_meta"] == {"phase": TOOL_TO_PHASE["patch_runtime"]}
 
 
 async def test_server_info_reports_package_version():
