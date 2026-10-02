@@ -106,14 +106,21 @@ def _is_blocked(result: dict[str, Any]) -> bool:
     return any(scope.get("compatible") is False or scope.get("blockers") for scope in scopes)
 
 
-def _is_preview(result: dict[str, Any]) -> bool:
+_LEGACY_PREVIEW_TOOLS = frozenset({"create_runtime", "patch_runtime", "delete_runtime"})
+
+
+def _is_preview(result: dict[str, Any], tool_name: str) -> bool:
     """Report whether a response is a confirm-gate preview rather than an executed action.
 
     ``PreviewResponse`` sets ``status="preview"``. The trainer runtime tools still
-    use the legacy ``data.action="preview"`` shape (see docs/CONVENTIONS.md).
+    use the legacy ``data.action="preview"`` shape (see docs/CONVENTIONS.md), so
+    that shape only counts for those tools. Any other tool is free to return an
+    ``action`` field of its own without losing its hint.
     """
     if result.get("status") == "preview":
         return True
+    if tool_name not in _LEGACY_PREVIEW_TOOLS:
+        return False
     data = result.get("data")
     return isinstance(data, dict) and data.get("action") == "preview"
 
@@ -133,7 +140,8 @@ def _inject_meta(result: Any, tool_name: str) -> Any:
     if "error" in result or "error_code" in result:
         return result
     phase = TOOL_TO_PHASE.get(tool_name)
-    hint = None if _is_blocked(result) or _is_preview(result) else TOOL_NEXT_HINTS.get(tool_name)
+    withheld = _is_blocked(result) or _is_preview(result, tool_name)
+    hint = None if withheld else TOOL_NEXT_HINTS.get(tool_name)
     if phase or hint:
         meta: dict[str, str] = {}
         if phase:

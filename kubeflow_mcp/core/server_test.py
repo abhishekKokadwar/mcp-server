@@ -188,6 +188,14 @@ class TestInjectMetaPreviewResponses:
             )
             assert "next" not in result["_meta"], tool_name
 
+    def test_legacy_preview_shape_only_counts_for_runtime_tools(self):
+        """Another tool returning data.action="preview" keeps its hint."""
+        for tool_name in TOOL_NEXT_HINTS:
+            if tool_name in ("create_runtime", "patch_runtime", "delete_runtime"):
+                continue
+            result = _inject_meta(ToolResponse(data={"action": "preview"}).model_dump(), tool_name)
+            assert result["_meta"]["next"] == TOOL_NEXT_HINTS[tool_name], tool_name
+
     def test_phase_preserved_for_preview(self):
         result = _inject_meta(PreviewResponse(config={}).model_dump(), "fine_tune")
         assert result["_meta"]["phase"] == TOOL_TO_PHASE["fine_tune"]
