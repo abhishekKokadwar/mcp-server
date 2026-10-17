@@ -159,6 +159,23 @@ def test_serve_rejects_unknown_persona_from_env_or_config():
     mock_create_server.assert_not_called()
 
 
+def test_serve_rejects_unknown_persona_from_real_environment(monkeypatch):
+    """KUBEFLOW_MCP_PERSONA goes through the real load_config(), with no config or policy file."""
+    from kubeflow_mcp.core.policy import reload_policy
+
+    monkeypatch.setattr("kubeflow_mcp.core.config._find_config_file", lambda: None)
+    monkeypatch.setattr("kubeflow_mcp.core.policy._get_policy_paths", lambda: [])
+    reload_policy()
+    try:
+        result = CliRunner().invoke(cli, ["serve"], env={"KUBEFLOW_MCP_PERSONA": "bogus"})
+    finally:
+        reload_policy()
+
+    assert result.exit_code == 2
+    assert "Unknown persona: bogus" in result.output
+    assert "Traceback" not in result.output
+
+
 @pytest.mark.parametrize(
     ("args", "config_persona"),
     [
