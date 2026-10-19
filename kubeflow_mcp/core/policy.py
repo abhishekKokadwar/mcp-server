@@ -136,6 +136,13 @@ def _find_policy_file() -> Path | None:
     return None
 
 
+class PolicyFileError(RuntimeError):
+    """The policy file exists but cannot be used, so the server must not start.
+
+    A ``RuntimeError`` so existing callers keep working; ``serve()`` catches it to print
+    the message without a traceback."""
+
+
 def _load_policy_file() -> dict[str, Any]:
     """Load policy from YAML file.
 
@@ -154,17 +161,17 @@ def _load_policy_file() -> dict[str, Any]:
         with open(path) as f:
             data = yaml.safe_load(f)
     except ImportError as e:
-        raise RuntimeError(f"Cannot enforce policy file {path}: PyYAML is not installed") from e
+        raise PolicyFileError(f"Cannot enforce policy file {path}: PyYAML is not installed") from e
     except Exception as e:
-        raise RuntimeError(f"Failed to load policy file {path}: {e}") from e
+        raise PolicyFileError(f"Failed to load policy file {path}: {e}") from e
 
     logger.debug(f"Loaded policy from {path}")
     return _validate_policy_shape(data, path)
 
 
-def _shape_error(path: Path, key: str, expected: str, value: Any) -> RuntimeError:
+def _shape_error(path: Path, key: str, expected: str, value: Any) -> PolicyFileError:
     """Build the error for a policy value of the wrong type."""
-    return RuntimeError(
+    return PolicyFileError(
         f"Invalid policy file {path}: '{key}' must be {expected}, "
         f"got {type(value).__name__} {reprlib.repr(value)}"
     )
@@ -186,7 +193,7 @@ def _check_string_list(value: Any, key: str, path: Path) -> None:
     time, so ``deny: risk:destructive`` would deny nothing.
     """
     if isinstance(value, str):
-        raise RuntimeError(
+        raise PolicyFileError(
             f"Invalid policy file {path}: '{key}' must be a list of strings, got the single "
             f"string {value!r}. Write it as a YAML list item: '- {value}'"
         )
@@ -242,7 +249,7 @@ def _validate_policy_shape(data: Any, path: Path) -> dict[str, Any]:
     if data is None:
         return {}
     if not isinstance(data, dict):
-        raise RuntimeError(
+        raise PolicyFileError(
             f"Invalid policy file {path}: the top level must be a mapping, "
             f"got {type(data).__name__} {reprlib.repr(data)}"
         )
