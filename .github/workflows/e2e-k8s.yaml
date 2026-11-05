@@ -11,20 +11,7 @@ name: E2E Test - Kubernetes
 #   - workflow_dispatch: manual runs
 on:
   push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - "kubeflow_mcp/**"
-      - "tests/e2e/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - "Makefile"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "examples/kubernetes/**"
-      - ".github/workflows/e2e-k8s.yaml"
-  workflow_dispatch:
+    branches: [check/trainer-2.4-rc1]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,16 +23,16 @@ permissions:
 jobs:
   e2e:
     name: E2E Test (Kind Cluster)
-    runs-on: cncf-ubuntu-16-64-x86
+    runs-on: ubuntu-latest
     # Successful runs take ~35-40 min (cluster setup + tests); cap well
     # above that so hung runs cannot hold the large runner indefinitely.
-    timeout-minutes: 50
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false
       matrix:
         kubernetes-version: ["1.32.3"]
-        trainer-ref: ["v2.3.0"]  # CI baseline; >=2.3.0,<2.4.0 supported at runtime
+        trainer-ref: ["v2.3.0", "v2.4.0-rc.1"]
 
     steps:
       - name: Checkout repository
@@ -85,18 +72,18 @@ jobs:
         env:
           KUBEFLOW_MCP_E2E: "true"
         run: |
-          uv run pytest tests/e2e/test_kubernetes_e2e.py -v
+          uv run pytest tests/e2e/test_kubernetes_e2e.py -v -rs
 
   e2e-image:
     name: E2E Test (Runtime Image) (${{ matrix.kubernetes-version }}, ${{ matrix.trainer-ref }})
-    runs-on: cncf-ubuntu-16-64-x86
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     strategy:
       fail-fast: false
       matrix:
         kubernetes-version: ["1.32.3"]
-        trainer-ref: ["v2.3.0"]
+        trainer-ref: ["v2.3.0", "v2.4.0-rc.1"]
 
     env:
       IMAGE: kubeflow-mcp:${{ github.sha }}
@@ -172,7 +159,7 @@ jobs:
             curl -sf http://localhost:8000/health >/dev/null && break
             sleep 1
           done
-          KUBEFLOW_MCP_E2E_TOKEN="$E2E_TOKEN" uv run pytest tests/e2e/test_kubernetes_e2e.py -v
+          KUBEFLOW_MCP_E2E_TOKEN="$E2E_TOKEN" uv run pytest tests/e2e/test_kubernetes_e2e.py -v -rs
 
       - name: Dump server state on failure
         if: failure()
